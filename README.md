@@ -1,6 +1,6 @@
 # Webhook receiver
 
-A small [Next.js 14](https://nextjs.org/) app that accepts signed webhook `POST` requests, stores the JSON payload in PostgreSQL via [Prisma](https://www.prisma.io/), and exposes a simple listing endpoint. Intended for deployment on [Fly.io](https://fly.io/).
+A small [Next.js 14](https://nextjs.org/) app that accepts signed webhook `POST` requests, stores each event in PostgreSQL via [Prisma](https://www.prisma.io/) (parsed JSON when valid, otherwise the raw body with an error status), and exposes a simple listing endpoint. Intended for deployment on [Fly.io](https://fly.io/).
 
 ## Database structure
 
@@ -10,7 +10,9 @@ Events are stored in the `webhook_events` table (model `WebhookEvent` in Prisma)
 |---------------|-------------|-------------|
 | `id`          | `UUID`      | Primary key; generated when the row is inserted. |
 | `received_at` | `TIMESTAMP` | Server time when the event was accepted and stored (UTC in the API as ISO 8601). |
-| `payload`     | `JSONB`     | Parsed JSON body of the webhook. |
+| `status`      | enum        | `processed` when the body was valid JSON and stored in `payload`; `error` when the body was not valid JSON (see `raw_body`). |
+| `payload`     | `JSONB`     | Parsed JSON body when `status` is `processed`. `NULL` when `status` is `error`. |
+| `raw_body`    | `TEXT`      | Original request body text when `status` is `error` (invalid JSON). `NULL` when JSON parsed successfully. |
 
 There is an index on `received_at` descending to make listing recent events efficient.
 
@@ -21,14 +23,13 @@ Receives the raw webhook body and verifies authenticity before persisting.
 - **Headers**
   - `X-Signature`: HMAC-SHA256 of the **exact raw request body** (as UTF-8 bytes), using the shared secret. Only the **v1** scheme is accepted; the digest must be hex (64 characters for SHA-256). Examples of accepted shapes include `v1=<hex>`, `v1,<hex>`, and comma-separated forms such as `t=1234567890,v1=<hex>`.
   - `Content-Type`: typically `application/json` (the body is still verified as raw text before parsing).
-- **Body**: JSON. An empty body is treated as `{}` after verification.
+- **Body**: Expected to be JSON. An empty body is treated as `{}` after verification. If the body is not valid JSON, the event is still stored: `status` is set to `error`, the raw text is saved in `raw_body`, and `payload` is left empty (`NULL`).
 
 **Responses**
 
 | Status | Meaning |
 |--------|---------|
-| `201`  | Event stored. JSON: `{ "id": "<uuid>", "receivedAt": "<iso8601>" }`. |
-| `400`  | Body is not valid JSON. |
+| `201`  | Event stored (valid or invalid JSON after signature check). JSON: `{ "id": "<uuid>", "receivedAt": "<iso8601>" }`. |
 | `401`  | Missing or invalid signature. |
 | `503`  | Database error while saving; callers should retry (nothing is committed). |
 
@@ -40,7 +41,7 @@ Returns stored events, newest first.
 
 - **Query**
   - `limit` (optional): number of rows, between `1` and `100`; default `50`.
-- **Response**: `200` with JSON `{ "events": [ { "id", "receivedAt", "payload" }, ... ] }`.
+- **Response**: `200` with JSON `{ "events": [ { "id", "receivedAt", "status", "payload", "rawBody" }, ... ] }` (`payload` / `rawBody` may be `null` depending on `status`).
 - **Errors**: `503` if the database read fails.
 
 ## Environment variables
@@ -148,6 +149,20 @@ curl -sS -X POST "http://localhost:3000/webhooks" \
   -H "X-Signature: $SIG" \
   -d "$BODY"
 ```
+
+**Invalid JSON (`status: error`)** — signature must still cover the exact bytes sent (here, the literal string `not-json`):
+
+```bash
+export BODY='not-json'
+export SIG=$(node -e "const c=require('crypto');process.stdout.write('v1='+c.createHmac('sha256','fluff-secret-abc123').update(process.env.BODY,'utf8').digest('hex'))")
+
+curl -sS -X POST "http://localhost:3000/webhooks" \
+  -H "Content-Type: application/json" \
+  -H "X-Signature: $SIG" \
+  -d "$BODY"
+```
+
+Listing events afterward should show the new row with `"status":"error"`, `"payload":null`, and `"rawBody":"not-json"`.
 
 **List stored events:**
 

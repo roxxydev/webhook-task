@@ -7,10 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum WebhookEventStatus {
+  error
+  processed
+}
+
 model WebhookEvent {
-  id          String   @id @default(uuid()) @db.Uuid
-  receivedAt  DateTime @default(now()) @map("received_at")
-  payload     Json
+  id          String             @id @default(uuid()) @db.Uuid
+  receivedAt  DateTime           @default(now()) @map("received_at")
+  status      WebhookEventStatus @default(processed)
+  payload     Json?
+  rawBody     String?            @map("raw_body")
 
   @@map("webhook_events")
   @@index([receivedAt(sort: Desc)])

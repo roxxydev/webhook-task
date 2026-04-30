@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
+import { WebhookEventStatus } from "@prisma/client";
 import { webhookHmacSecret } from "@/lib/config";
 import { prisma } from "@/lib/prisma";
 import { verifyV1WebhookSignature } from "@/lib/verify-webhook-signature";
@@ -7,7 +8,9 @@ import { verifyV1WebhookSignature } from "@/lib/verify-webhook-signature";
 const webhookListSelect = {
   id: true,
   receivedAt: true,
+  status: true,
   payload: true,
+  rawBody: true,
 } as const;
 
 type WebhookEventListRow = Prisma.WebhookEventGetPayload<{
@@ -17,7 +20,9 @@ type WebhookEventListRow = Prisma.WebhookEventGetPayload<{
 type WebhookEventListItem = {
   id: WebhookEventListRow["id"];
   receivedAt: string;
+  status: WebhookEventListRow["status"];
   payload: WebhookEventListRow["payload"];
+  rawBody: WebhookEventListRow["rawBody"];
 };
 
 function parseLimit(raw: string | null): number {
@@ -35,24 +40,32 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  let payload: unknown;
+  let parsedPayload: Prisma.InputJsonValue | undefined;
   try {
-    payload = rawBody.length === 0 ? {} : JSON.parse(rawBody);
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+    parsedPayload = (rawBody.length === 0 ? {} : JSON.parse(rawBody)) as Prisma.InputJsonValue;
+  } catch {}
 
   try {
-    const event = await prisma.webhookEvent.create({
-      data: { payload: payload as Prisma.InputJsonValue },
-    });
+    const event =
+      parsedPayload !== undefined
+        ? await prisma.webhookEvent.create({
+            data: {
+              status: WebhookEventStatus.processed,
+              payload: parsedPayload,
+              rawBody,
+            },
+          })
+        : await prisma.webhookEvent.create({
+            data: { status: WebhookEventStatus.error, rawBody },
+          });
 
     return NextResponse.json(
       { id: event.id, receivedAt: event.receivedAt.toISOString() },
       { status: 201 }
     );
   } catch (err) {
-    console.error("webhook persist failed", err);
+    const ctx = parsedPayload === undefined ? "invalid json" : "persist";
+    console.error(`webhook ${ctx} failed`, err);
     return NextResponse.json(
       { error: "Failed to store webhook event" },
       { status: 503 }
@@ -74,7 +87,9 @@ export async function GET(request: NextRequest) {
       events: events.map((e: WebhookEventListRow): WebhookEventListItem => ({
         id: e.id,
         receivedAt: e.receivedAt.toISOString(),
+        status: e.status,
         payload: e.payload,
+        rawBody: e.rawBody,
       })),
     });
   } catch (err) {
