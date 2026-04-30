@@ -1,0 +1,33 @@
+{
+  "name": "webhook-task",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "node scripts/prisma-env.mjs generate && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:generate": "node scripts/prisma-env.mjs generate",
+    "db:migrate": "node scripts/prisma-env.mjs migrate dev",
+    "db:migrate:deploy": "node scripts/prisma-env.mjs migrate deploy",
+    "db:studio": "node scripts/prisma-env.mjs studio",
+    "fly:bootstrap": "bash scripts/fly-bootstrap.sh",
+    "deploy": "fly deploy"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.6.0",
+    "next": "14.2.35",
+    "prisma": "^6.6.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.30",
+    "@types/react": "^18.3.20",
+    "@types/react-dom": "^18.3.6",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "14.2.35",
+    "dotenv": "^16.5.0",
+    "typescript": "^5.8.3"
+  }
+}
